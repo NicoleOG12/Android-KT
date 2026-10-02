@@ -23,7 +23,6 @@ import androidx.compose.ui.unit.dp
 import com.example.listacompras.ui.theme.ListaComprasTheme
 
 class MainActivity : ComponentActivity() {
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -44,8 +43,9 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun ListaCompras(modifier: Modifier = Modifier) {
-
+fun ListaCompras(
+    modifier: Modifier = Modifier
+) {
     var nome by remember {
         mutableStateOf("")
     }
@@ -69,42 +69,22 @@ fun ListaCompras(modifier: Modifier = Modifier) {
     Column(
         modifier = modifier.padding(top = 60.dp)
     ) {
-
         Text("Lista de Compras")
 
-        TextField(
-            value = nome,
-            onValueChange = {
+        Formulario(
+            nome = nome,
+            preco = preco,
+            quantidade = quantidade,
+            onNomeChange = {
                 nome = it
             },
-            label = {
-                Text("Nome do produto")
-            }
-        )
-
-        TextField(
-            value = preco,
-            onValueChange = {
+            onPrecoChange = {
                 preco = it
             },
-            label = {
-                Text("Preço")
-            }
-        )
-
-        TextField(
-            value = quantidade,
-            onValueChange = {
+            onQuantidadeChange = {
                 quantidade = it
             },
-            label = {
-                Text("Quantidade")
-            }
-        )
-
-        Button(
-            onClick = {
-
+            onCadastrar = {
                 val produto = Produto(
                     nome = nome,
                     preco = preco.toDouble(),
@@ -112,24 +92,81 @@ fun ListaCompras(modifier: Modifier = Modifier) {
                 )
 
                 produtos.add(produto)
-
                 total += produto.calcularTotal()
             }
-        ) {
-            Text("Cadastrar")
-        }
+        )
 
-        for (produto in produtos) {
+        ListaProdutos(
+            produtos = produtos
+        )
 
-            Text(
-                "${produto.nome} - " +
-                        "${produto.quantidade} x R$ ${produto.preco} = " +
-                        "R$ ${produto.calcularTotal()}"
-            )
-        }
-
-        Text("Total da compra: R$ $total")
+        Resumo(
+            total = total
+        )
     }
+}
+
+@Composable
+fun Formulario(
+    nome: String,
+    preco: String,
+    quantidade: String,
+    onNomeChange: (String) -> Unit,
+    onPrecoChange: (String) -> Unit,
+    onQuantidadeChange: (String) -> Unit,
+    onCadastrar: () -> Unit
+) {
+    TextField(
+        value = nome,
+        onValueChange = onNomeChange,
+        label = {
+            Text("Nome do produto")
+        }
+    )
+
+    TextField(
+        value = preco,
+        onValueChange = onPrecoChange,
+        label = {
+            Text("Preço")
+        }
+    )
+
+    TextField(
+        value = quantidade,
+        onValueChange = onQuantidadeChange,
+        label = {
+            Text("Quantidade")
+        }
+    )
+
+    Button(
+        onClick = onCadastrar
+    ) {
+        Text("Cadastrar")
+    }
+}
+
+@Composable
+fun ListaProdutos(
+    produtos: List<Produto>
+) {
+    for (produto in produtos) {
+        Text(
+            "${produto.nome} - " +
+                    "${produto.quantidade} x R$ ${produto.preco} = " +
+                    "R$ ${produto.calcularTotal()}"
+        )
+    }
+}
+
+@Composable
+fun Resumo(
+    total: Double
+) {
+    Text(
+        "Total da compra: R$ $total"
+    )
 }
 
 class Produto(
@@ -137,7 +174,6 @@ class Produto(
     val preco: Double,
     val quantidade: Int
 ) {
-
     fun calcularTotal(): Double {
         return preco * quantidade
     }
@@ -146,7 +182,6 @@ class Produto(
 @Preview(showBackground = true)
 @Composable
 fun ListaComprasPreview() {
-
     ListaComprasTheme {
         ListaCompras()
     }
