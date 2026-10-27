@@ -45,7 +45,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.datastore.preferences.core.edit
@@ -56,16 +55,20 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.example.controledeviagens.ui.theme.ControleDeViagensTheme
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private val Context.dataStore by preferencesDataStore(
     name = "preferencias_motorista"
 )
 
-private val CHAVE_MOTORISTA = stringPreferencesKey("nome_motorista")
+private val CHAVE_MOTORISTA =
+    stringPreferencesKey("nome_motorista")
 
 class MainActivity : ComponentActivity() {
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -80,9 +83,14 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun ControleDeViagens() {
+
     val navController = rememberNavController()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+
+    val banco = remember(context) {
+        ViagemDatabase(context.applicationContext)
+    }
 
     var motorista by remember {
         mutableStateOf("")
@@ -121,21 +129,61 @@ fun ControleDeViagens() {
     var totalGasto by remember { mutableStateOf(0.0) }
     var totalKm by remember { mutableStateOf(0.0) }
     var mediaKmLitro by remember { mutableStateOf(0.0) }
+    var gastoCombustivel by remember { mutableStateOf(0.0) }
+    var gastoPedagio by remember { mutableStateOf(0.0) }
+
+    // Carrega os registros salvos no SQLite.
+    LaunchedEffect(banco) {
+        val registros = withContext(Dispatchers.IO) {
+            banco.listarViagens()
+        }
+
+        viagens.clear()
+        viagens.addAll(registros)
+
+        totalKm = viagens.sumOf {
+            it.calcularDistancia()
+        }
+
+        gastoCombustivel = viagens.sumOf {
+            it.litros * it.valor
+        }
+
+        gastoPedagio = viagens.sumOf {
+            it.pedagio
+        }
+
+        totalGasto = gastoCombustivel + gastoPedagio
+
+        val totalLitros = viagens.sumOf {
+            it.litros
+        }
+
+        mediaKmLitro = if (totalLitros > 0) {
+            totalKm / totalLitros
+        } else {
+            0.0
+        }
+    }
 
     Scaffold(
         modifier = Modifier.fillMaxSize()
     ) { innerPadding ->
+
         NavHost(
             navController = navController,
             startDestination = "lista",
             modifier = Modifier.padding(innerPadding)
         ) {
+
             composable("lista") {
                 TelaListaViagens(
                     viagens = viagens,
                     totalGasto = totalGasto,
                     totalKm = totalKm,
                     mediaKmLitro = mediaKmLitro,
+                    gastoCombustivel = gastoCombustivel,
+                    gastoPedagio = gastoPedagio,
                     navController = navController,
                     motorista = motorista,
                     onSalvarMotorista = ::salvarMotorista
@@ -159,36 +207,86 @@ fun ControleDeViagens() {
                     onPedagioChange = { pedagio = it },
                     onValorChange = { valor = it },
                     onCadastrar = {
-                        val viagem = Viagem(
-                            data = data,
-                            kmInicial = kmInicial.toDouble(),
-                            kmFinal = kmFinal.toDouble(),
-                            litros = litros.toDouble(),
-                            combustivel = combustivel,
-                            pedagio = pedagio.toDouble(),
-                            valor = valor.toDouble()
-                        )
 
-                        viagens.add(viagem)
-                        totalGasto += viagem.calcularCusto()
-                        totalKm += viagem.calcularDistancia()
+                        val kmI = kmInicial.toDoubleOrNull()
+                        val kmF = kmFinal.toDoubleOrNull()
+                        val litrosValor = litros.toDoubleOrNull()
+                        val pedagioValor = pedagio.toDoubleOrNull()
+                        val precoCombustivel = valor.toDoubleOrNull()
 
-                        val totalLitros = viagens.sumOf { it.litros }
-                        mediaKmLitro = if (totalLitros > 0) {
-                            totalKm / totalLitros
-                        } else {
-                            0.0
+                        val camposValidos =
+                            data.isNotBlank() &&
+                                    combustivel.isNotBlank() &&
+                                    kmI != null &&
+                                    kmF != null &&
+                                    litrosValor != null &&
+                                    pedagioValor != null &&
+                                    precoCombustivel != null &&
+                                    kmI >= 0 &&
+                                    kmF >= kmI &&
+                                    litrosValor >= 0 &&
+                                    pedagioValor >= 0 &&
+                                    precoCombustivel >= 0
+
+                        if (camposValidos) {
+
+                            val viagem = Viagem(
+                                data = data.trim(),
+                                kmInicial = kmI!!,
+                                kmFinal = kmF!!,
+                                litros = litrosValor!!,
+                                combustivel = combustivel.trim(),
+                                pedagio = pedagioValor!!,
+                                valor = precoCombustivel!!
+                            )
+
+                            scope.launch {
+                                val id = withContext(Dispatchers.IO) {
+                                    banco.inserirViagem(viagem)
+                                }
+
+                                if (id != -1L) {
+
+                                    viagens.add(0, viagem)
+
+                                    totalKm = viagens.sumOf {
+                                        it.calcularDistancia()
+                                    }
+
+                                    gastoCombustivel = viagens.sumOf {
+                                        it.litros * it.valor
+                                    }
+
+                                    gastoPedagio = viagens.sumOf {
+                                        it.pedagio
+                                    }
+
+                                    totalGasto =
+                                        gastoCombustivel + gastoPedagio
+
+                                    val totalLitros = viagens.sumOf {
+                                        it.litros
+                                    }
+
+                                    mediaKmLitro =
+                                        if (totalLitros > 0) {
+                                            totalKm / totalLitros
+                                        } else {
+                                            0.0
+                                        }
+
+                                    data = ""
+                                    kmInicial = ""
+                                    kmFinal = ""
+                                    litros = ""
+                                    combustivel = ""
+                                    pedagio = ""
+                                    valor = ""
+
+                                    navController.navigateUp()
+                                }
+                            }
                         }
-
-                        data = ""
-                        kmInicial = ""
-                        kmFinal = ""
-                        litros = ""
-                        combustivel = ""
-                        pedagio = ""
-                        valor = ""
-
-                        navController.navigateUp()
                     },
                     navController = navController
                 )
@@ -203,10 +301,13 @@ fun TelaListaViagens(
     totalGasto: Double,
     totalKm: Double,
     mediaKmLitro: Double,
+    gastoCombustivel: Double,
+    gastoPedagio: Double,
     navController: NavController,
     motorista: String,
     onSalvarMotorista: (String) -> Unit
 ) {
+
     var novoMotorista by remember(motorista) {
         mutableStateOf(motorista)
     }
@@ -217,6 +318,7 @@ fun TelaListaViagens(
             .background(Color(0xFFFFF5FB))
             .padding(16.dp)
     ) {
+
         Text(
             text = "Controle de Viagens",
             fontSize = 28.sp,
@@ -285,7 +387,9 @@ fun TelaListaViagens(
                 containerColor = Color.White
             )
         ) {
-            Column(modifier = Modifier.padding(16.dp)) {
+            Column(
+                modifier = Modifier.padding(16.dp)
+            ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween
@@ -294,6 +398,7 @@ fun TelaListaViagens(
                         titulo = "Total gasto",
                         valor = "R$ %.2f".format(totalGasto)
                     )
+
                     ResumoItem(
                         titulo = "Total de km",
                         valor = "%.2f km".format(totalKm)
@@ -310,9 +415,27 @@ fun TelaListaViagens(
                         titulo = "Média km/l",
                         valor = "%.2f".format(mediaKmLitro)
                     )
+
                     ResumoItem(
                         titulo = "Viagens",
                         valor = viagens.size.toString()
+                    )
+                }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 16.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    ResumoItem(
+                        titulo = "Gasto combustível",
+                        valor = "R$ %.2f".format(gastoCombustivel)
+                    )
+
+                    ResumoItem(
+                        titulo = "Gasto pedágios",
+                        valor = "R$ %.2f".format(gastoPedagio)
                     )
                 }
             }
@@ -349,7 +472,9 @@ fun TelaListaViagens(
                             containerColor = Color.White
                         )
                     ) {
-                        Column(modifier = Modifier.padding(16.dp)) {
+                        Column(
+                            modifier = Modifier.padding(16.dp)
+                        ) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -366,6 +491,7 @@ fun TelaListaViagens(
                                             .size(22.dp)
                                             .padding(end = 4.dp)
                                     )
+
                                     Text(
                                         text = viagem.data,
                                         fontWeight = FontWeight.Bold,
@@ -393,6 +519,7 @@ fun TelaListaViagens(
                                     tint = Color(0xFFFF1493),
                                     modifier = Modifier.size(20.dp)
                                 )
+
                                 Text(
                                     text = viagem.combustivel,
                                     color = Color.DarkGray,
@@ -412,15 +539,36 @@ fun TelaListaViagens(
                                         viagem.calcularDistancia()
                                     )
                                 )
+
                                 InformacaoViagem(
                                     titulo = "Combustível",
                                     valor = "%.2f L".format(viagem.litros)
                                 )
+
                                 InformacaoViagem(
                                     titulo = "Pedágio",
                                     valor = "R$ %.2f".format(viagem.pedagio)
                                 )
                             }
+
+                            Text(
+                                text = "Km inicial: %.2f | Km final: %.2f".format(
+                                    viagem.kmInicial,
+                                    viagem.kmFinal
+                                ),
+                                color = Color.Gray,
+                                fontSize = 12.sp,
+                                modifier = Modifier.padding(top = 10.dp)
+                            )
+
+                            Text(
+                                text = "Gasto com combustível: R$ %.2f".format(
+                                    viagem.litros * viagem.valor
+                                ),
+                                color = Color.DarkGray,
+                                fontSize = 13.sp,
+                                modifier = Modifier.padding(top = 4.dp)
+                            )
                         }
                     }
                 }
@@ -428,7 +576,9 @@ fun TelaListaViagens(
         }
 
         Button(
-            onClick = { navController.navigate("cadastro") },
+            onClick = {
+                navController.navigate("cadastro")
+            },
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(top = 12.dp),
@@ -446,12 +596,15 @@ fun ResumoItem(
     titulo: String,
     valor: String
 ) {
-    Column(modifier = Modifier.padding(horizontal = 4.dp)) {
+    Column(
+        modifier = Modifier.padding(horizontal = 4.dp)
+    ) {
         Text(
             text = titulo,
             fontSize = 13.sp,
             color = Color.Gray
         )
+
         Text(
             text = valor,
             fontSize = 18.sp,
@@ -472,6 +625,7 @@ fun InformacaoViagem(
             fontSize = 12.sp,
             color = Color.Gray
         )
+
         Text(
             text = valor,
             fontSize = 14.sp,
@@ -536,10 +690,15 @@ fun TelaCadastroViagem(
         )
 
         Button(
-            onClick = { navController.navigateUp() },
+            onClick = {
+                navController.navigateUp()
+            },
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(top = 8.dp)
+                .padding(top = 8.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = Color(0xFF9C27B0)
+            )
         ) {
             Text("Voltar", fontSize = 16.sp)
         }
@@ -583,6 +742,7 @@ fun FormularioViagem(
             icon = Icons.Default.Route,
             modifier = Modifier.weight(1f)
         )
+
         CampoViagem(
             value = kmFinal,
             onValueChange = onKmFinalChange,
@@ -606,6 +766,7 @@ fun FormularioViagem(
             icon = Icons.Default.LocalGasStation,
             modifier = Modifier.weight(1f)
         )
+
         CampoViagem(
             value = combustivel,
             onValueChange = onCombustivelChange,
@@ -629,10 +790,11 @@ fun FormularioViagem(
             icon = Icons.Default.Toll,
             modifier = Modifier.weight(1f)
         )
+
         CampoViagem(
             value = valor,
             onValueChange = onValorChange,
-            label = "Valor combustível",
+            label = "Preço por litro",
             icon = Icons.Default.LocalGasStation,
             modifier = Modifier
                 .weight(1f)
@@ -666,6 +828,7 @@ fun CampoViagem(
         onValueChange = onValueChange,
         modifier = modifier,
         label = { Text(label) },
+        singleLine = true,
         leadingIcon = {
             Icon(
                 imageVector = icon,
@@ -697,13 +860,5 @@ class Viagem(
 
     fun calcularCusto(): Double {
         return (litros * valor) + pedagio
-    }
-}
-
-@Preview(showBackground = true)
-@Composable
-fun ControleDeViagensPreview() {
-    ControleDeViagensTheme {
-        ControleDeViagens()
     }
 }
